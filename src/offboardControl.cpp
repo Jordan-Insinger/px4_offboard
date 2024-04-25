@@ -7,7 +7,7 @@ offboardControl::offboardControl() : Node("offboard_control_node"){
 	global_lpos_sub = this->create_subscription<nav_msgs::msg::Odometry>("global_position/local", 10, std::bind(&offboardControl::lpos_callback, this, _1));
 
 	tol_client = this->create_client<mavros_msgs::srv::CommandTOL>("cmd/takeoff");
-	arm_client = this->create_client<mavros_msgs::srv::CommandBool>("cmd/arming");
+	arm_client = this->create_client<mavros_msgs::srv::CommandBool>("/astro_sim/cmd/arming");
 
 	offboard_str_ = std::string("OFFBOARD");
 	
@@ -65,10 +65,13 @@ void offboardControl::send_arming_request(bool arm) {
             auto arm_request = std::make_shared<mavros_msgs::srv::CommandBool::Request>();
             arm_request->value = arm;
             auto arm_result = arm_client->async_send_request(arm_request, std::bind(&offboardControl::arm_response_callback, this, _1));
-        } else {
+         }
+         else {
             RCLCPP_WARN(this->get_logger(), "Device already armed - arm request ignored.");
             return;
             } 
+	}
+	else {
         if (current_state.armed) {
             RCLCPP_WARN(this->get_logger(), "Sending disarm request.");
             auto arm_request = std::make_shared<mavros_msgs::srv::CommandBool::Request>();
@@ -79,6 +82,7 @@ void offboardControl::send_arming_request(bool arm) {
             return;
         }
     }
+    
 }
 
 void offboardControl::send_takeoff_request() {
