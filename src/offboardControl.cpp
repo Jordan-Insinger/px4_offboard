@@ -2,12 +2,14 @@
 using std::placeholders::_1;
 
 offboardControl::offboardControl() : Node("offboard_control_node"){
-	// subscriber
-	global_gpos_sub = this->create_subscription<sensor_msgs::msg::NavSatFix>("global_position/global", 10, std::bind(&offboardControl::pose_callback, this, _1));
-	global_lpos_sub = this->create_subscription<nav_msgs::msg::Odometry>("global_position/local", 10, std::bind(&offboardControl::lpos_callback, this, _1));
+	
+	// Publisher
+	global_pose_publisher = this->create_publisher<geographic_msgs::msg::GeoPoseStamped>("/astro_sim/setpoint_position/global", 10);
 
-	tol_client = this->create_client<mavros_msgs::srv::CommandTOL>("cmd/takeoff");
+	tol_client = this->create_client<mavros_msgs::srv::CommandTOL>("/astro_sim/cmd/takeoff");
 	arm_client = this->create_client<mavros_msgs::srv::CommandBool>("/astro_sim/cmd/arming");
+	set_mode_client = this->create_client<mavros_msgs::srv::SetMode>("/astro_sim/set_mode");
+
 
 	offboard_str_ = std::string("OFFBOARD");
 	
@@ -52,8 +54,10 @@ offboardControl::offboardControl() : Node("offboard_control_node"){
     //==========//
 
     joy_subscriber_ = this->create_subscription<sensor_msgs::msg::Joy>("joy", 10, std::bind(&offboardControl::joy_callback, this, _1));
-    state_subscriber_ = this->create_subscription<mavros_msgs::msg::State>("state", sub_qos, std::bind(&offboardControl::state_callback, this, _1));
+    state_subscriber_ = this->create_subscription<mavros_msgs::msg::State>("/astro_sim/state", sub_qos, std::bind(&offboardControl::state_callback, this, _1));
     ext_state_subscriber_ = this->create_subscription<mavros_msgs::msg::ExtendedState>("extended_state", sub_qos, std::bind(&offboardControl::ext_state_callback, this, _1));
+    global_gpos_sub = this->create_subscription<sensor_msgs::msg::NavSatFix>("/astro_sim/global_position/global", sub_qos, std::bind(&offboardControl::pose_callback, this, _1));
+	global_lpos_sub = this->create_subscription<nav_msgs::msg::Odometry>("/astro__sim/global_position/local", 10, std::bind(&offboardControl::lpos_callback, this, _1));
 
 }
 
@@ -84,15 +88,36 @@ void offboardControl::send_arming_request(bool arm) {
     }
     
 }
+void offboardControl::setMode_request() {
+	rclcpp::Rate rate(10);
+	geographic_msgs::msg::GeoPoseStamped poseStamped;
+	geographic_msgs::msg::GeoPoint position;
 
+	position.latitude = latitude;
+	position.longitude = longitude;
+	position.altitude = altitude + 1.0f;
+
+	poseStamped.pose.position = position;
+	poseStamped.pose.orientation = orientation;
+
+	for(int i = 0; i < 100; i++) {
+		global_pose_publisher->publish(poseStamped);
+		rate.sleep();
+	}
+
+	auto request = std::make_shared<mavros_msgs::srv::SetMode::Request>();
+        request->custom_mode = "OFFBOARD";
+        auto set_mode_result = set_mode_client->async_send_request(request, std::bind(&offboardControl::setMode_response_callback, this, _1));
+        global_pose_publisher->publish(poseStamped);
+}
 void offboardControl::send_takeoff_request() {
 	auto request = std::make_shared<mavros_msgs::srv::CommandTOL::Request>();
 
-	request->min_pitch = asin(-2.0*(orientation.x*orientation.z - orientation.w*orientation.y));
+	//request->min_pitch = asin(-2.0*(orientation.x*orientation.z - orientation.w*orientation.y));
 	request->yaw = quat_to_yaw(orientation);
-	request->altitude = altitude + 2.0f; 
-	request->latitude = latitude;
-	request->longitude = longitude;
+	request->altitude = altitude + 50000.0f; 
+	request->latitude = latitude + 5000.0f;
+	request->longitude = longitude + 5000.0f;
 
 	auto tol_result = tol_client->async_send_request(request, std::bind(&offboardControl::tol_response_callback, this, _1));
 }
@@ -112,6 +137,7 @@ void offboardControl::arm_response_callback(rclcpp::Client<mavros_msgs::srv::Com
 
     if (response->success) {
         RCLCPP_INFO(this->get_logger(), "Arm/disarm request succeeded. Result=%d", response->result);
+
     } else {
         RCLCPP_ERROR(this->get_logger(), "Arm/disarm request failed!");
     }
@@ -191,22 +217,29 @@ void offboardControl::ext_state_callback(const mavros_msgs::msg::ExtendedState::
 void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_msg) {
     //Check for arm button press
     int arm_button_state = get_button(joy_msg, buttons_.arm);
-    if (arm_button_state != button_state_.arm.state) {
+
+     if (arm_button_state != button_state_.arm.state) {
         if (arm_button_state == 1) {
             //Arm or takeoff, depending on the state
             if (!current_state.armed) {
                 //Arm
                 send_arming_request(true);
-            } else {
-                send_takeoff_request();
-            }
-            // } else if (lnded_state_ == on_ground) {
-            //     //Takeoff
-            //     send_tol_request(true);
-            // }
+            } 
         }
         button_state_.arm.state = arm_button_state;
     }
+
+    // int takeoffButtonPress = get_button(joy_msg, buttons_.takeoff);
+    // if(takeoffButtonPress == 1) {
+    // 	RCLCPP_WARN(this->get_logger(), "Takeoff Request has been made");
+    // 	send_takeoff_request();
+    // }
+    int setModeButton = get_button(joy_msg, buttons_.takeoff);
+    if(setModeButton == 1) {
+    	RCLCPP_WARN(this->get_logger(), "Offboard mode request has been made");
+    	setMode_request();
+    }
+
 
     //Check for disarm button press
     //int disarm_button_state = get_button(joy_msg, buttons_.disarm);
@@ -253,6 +286,16 @@ void offboardControl::pose_callback(const sensor_msgs::msg::NavSatFix::SharedPtr
 void offboardControl::lpos_callback(const nav_msgs::msg::Odometry::SharedPtr lpos_msg) {
 	orientation = ((lpos_msg->pose).pose).orientation;
 }
+void offboardControl::setMode_response_callback(rclcpp::Client<mavros_msgs::srv::SetMode>::SharedFuture future) {
+	auto response = future.get();
+
+	if(response->mode_sent)
+		RCLCPP_WARN(this->get_logger(), "MODE SET TO OFFBOARD!");
+	else {
+		RCLCPP_WARN(this->get_logger(), "FAILED TO ENTER OFFBOARD MODE");
+	}
+
+}
 
 double offboardControl::get_axis(const sensor_msgs::msg::Joy::SharedPtr &joy_msg, const Axis &axis) {
     if (axis.axis < 0 || std::abs(axis.axis) > (int)joy_msg->axes.size()-1) {
@@ -270,7 +313,6 @@ int offboardControl::get_button(const sensor_msgs::msg::Joy::SharedPtr &joy_msg,
         RCLCPP_ERROR(this->get_logger(), "Button %d out of range, joy has %d buttons", button.button, joy_msg->buttons.size());
         return -1;
     }
-
     return joy_msg->buttons[button.button];
 }
 

@@ -5,6 +5,7 @@
 
 #include<geometry_msgs/msg/pose_stamped.hpp>
 #include<geographic_msgs/msg/geo_point.hpp>
+#include <geographic_msgs/msg/geo_pose_stamped.hpp>
 #include <mavros_msgs/msg/state.hpp>
 #include <mavros_msgs/msg/extended_state.hpp>
 #include<mavros_msgs/srv/command_tol.hpp>
@@ -16,6 +17,7 @@
 
 #include <geodesy/utm.h>
 #include <GeographicLib/Geoid.hpp>
+#include <string>
 
 class offboardControl : public rclcpp::Node {
 private:
@@ -31,12 +33,16 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr global_lpos_sub;
     rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr joy_subscriber_;
 
+    //position publisher
+    rclcpp::Publisher<geographic_msgs::msg::GeoPoseStamped>::SharedPtr global_pose_publisher;
+
 	// Service Clients for Mode, Arm/Disarm, Takeoff/Landing
     rclcpp::Client<mavros_msgs::srv::SetMode>::SharedPtr set_mode_client;
     rclcpp::Client<mavros_msgs::srv::CommandBool>::SharedPtr arm_client;
     rclcpp::Client<mavros_msgs::srv::CommandTOL>::SharedPtr tol_client;
 
     geometry_msgs::msg::Pose current_pose_;
+    geographic_msgs::msg::GeoPoseStamped global_setpoint_pose;
     mavros_msgs::msg::State current_state;
     float latitude, longitude, altitude;
     geometry_msgs::msg::Quaternion orientation;
@@ -99,7 +105,7 @@ private:
     // Service request functions
     void send_takeoff_request();
     void send_land_request();
-    void send_mode_request();
+    void setMode_request();
     void send_arming_request(bool arm);
 
     // Service request callback functions

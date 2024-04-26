@@ -5,8 +5,8 @@
     z_axis: 1
     yaw_axis: 0
     arm_button: 7
-    disarm_button: 6
-    takeoff_button: 1
+    disarm_button: 0
+    takeoff_button: 6
     land_button: 0
     x_vel_max: 0.5
     y_vel_max: 0.5
