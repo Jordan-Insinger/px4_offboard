@@ -217,13 +217,29 @@ void offboardControl::ext_state_callback(const mavros_msgs::msg::ExtendedState::
 void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_msg) {
     //Check for arm button press
     int arm_button_state = get_button(joy_msg, buttons_.arm);
+    rclcpp::Rate rate(10);
+	geographic_msgs::msg::GeoPoseStamped poseStamped;
+	geographic_msgs::msg::GeoPoint position;
+
+	position.latitude = latitude;
+	position.longitude = longitude;
+	position.altitude = altitude + 1.0f;
+
+	poseStamped.pose.position = position;
+	poseStamped.pose.orientation = orientation;
 
      if (arm_button_state != button_state_.arm.state) {
         if (arm_button_state == 1) {
             //Arm or takeoff, depending on the state
             if (!current_state.armed) {
+            	// set offboard mode
+            	setMode_request();
                 //Arm
                 send_arming_request(true);
+                while(true) {
+                	global_pose_publisher->publish(poseStamped);
+					rate.sleep();
+                }
             } 
         }
         button_state_.arm.state = arm_button_state;
