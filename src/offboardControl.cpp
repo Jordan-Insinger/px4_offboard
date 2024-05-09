@@ -2,16 +2,35 @@
 using std::placeholders::_1;
 
 offboardControl::offboardControl() : Node("offboard_control_node"){
-	
+
+	// NOT SURE WHAT SUB_QOS IS USED FOR, USED IN WILLIE'S CODE
+    auto sub_qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_default);
+    sub_qos.best_effort();
+    sub_qos.durability_volatile();
+
 	// Publisher
 	global_pose_publisher = this->create_publisher<geographic_msgs::msg::GeoPoseStamped>("/astro_sim/setpoint_position/global", 10);
+    velocity_publisher = this->create_publisher<geometry_msgs::msg::Twist>("/astro_sim/setpoint_velocity/cmd_vel_unstamped", 10);
 
+    // Subscribers
+    joy_subscriber_ = this->create_subscription<sensor_msgs::msg::Joy>("joy", 10, std::bind(&offboardControl::joy_callback, this, _1));
+    state_subscriber_ = this->create_subscription<mavros_msgs::msg::State>("/astro_sim/state", sub_qos, std::bind(&offboardControl::state_callback, this, _1));
+    ext_state_subscriber_ = this->create_subscription<mavros_msgs::msg::ExtendedState>("extended_state", sub_qos, std::bind(&offboardControl::ext_state_callback, this, _1));
+    global_gpos_sub = this->create_subscription<sensor_msgs::msg::NavSatFix>("/astro_sim/global_position/global", sub_qos, std::bind(&offboardControl::pose_callback, this, _1));
+	global_lpos_sub = this->create_subscription<nav_msgs::msg::Odometry>("/astro__sim/global_position/local", 10, std::bind(&offboardControl::lpos_callback, this, _1));
+    vel_subscriber = this->create_subscription<geometry_msgs::msg::Twist>("/astro_sim/setpoint_velocity/cmd_vel_unstamped", 10, std::bind(&offboardControl::setpoint_velocity_callback, this, _1));
+    // Service clients
 	tol_client = this->create_client<mavros_msgs::srv::CommandTOL>("/astro_sim/cmd/takeoff");
 	arm_client = this->create_client<mavros_msgs::srv::CommandBool>("/astro_sim/cmd/arming");
 	set_mode_client = this->create_client<mavros_msgs::srv::SetMode>("/astro_sim/set_mode");
 
-
-	offboard_str_ = std::string("OFFBOARD");
+    // Setting desired velocities
+    setpoint_velocity.linear.x = 0.0;
+    setpoint_velocity.linear.y = 0.0;
+    setpoint_velocity.linear.z = 1.0;
+    setpoint_velocity.angular.x = 0.0;
+    setpoint_velocity.angular.y = 0.0;
+    setpoint_velocity.angular.z = 0.0;
 	
 	//Get controller parameters
     this->declare_parameter("x_axis", -1);
@@ -47,18 +66,6 @@ offboardControl::offboardControl() : Node("offboard_control_node"){
     RCLCPP_INFO(this->get_logger(), "Loaded controller parameters:\nX: %d, Y: %d, Z: %d, Yaw: %d, Arm: %d, Disarm: %d, Takeoff: %d, Land: %d", 
         axes_.x.axis, axes_.y.axis, axes_.z.axis, axes_.yaw.axis,buttons_.arm.button, buttons_.disarm.button, buttons_.takeoff.button, buttons_.land.button);
 
-    // NOT SURE WHAT SUB_QOS IS USED FOR, USED IN WILLIE'S CODE
-    auto sub_qos = rclcpp::QoS(rclcpp::KeepLast(1), rmw_qos_profile_default);
-    sub_qos.best_effort();
-    sub_qos.durability_volatile();
-    //==========//
-
-    joy_subscriber_ = this->create_subscription<sensor_msgs::msg::Joy>("joy", 10, std::bind(&offboardControl::joy_callback, this, _1));
-    state_subscriber_ = this->create_subscription<mavros_msgs::msg::State>("/astro_sim/state", sub_qos, std::bind(&offboardControl::state_callback, this, _1));
-    ext_state_subscriber_ = this->create_subscription<mavros_msgs::msg::ExtendedState>("extended_state", sub_qos, std::bind(&offboardControl::ext_state_callback, this, _1));
-    global_gpos_sub = this->create_subscription<sensor_msgs::msg::NavSatFix>("/astro_sim/global_position/global", sub_qos, std::bind(&offboardControl::pose_callback, this, _1));
-	global_lpos_sub = this->create_subscription<nav_msgs::msg::Odometry>("/astro__sim/global_position/local", 10, std::bind(&offboardControl::lpos_callback, this, _1));
-
 }
 
 void offboardControl::send_arming_request(bool arm) {
@@ -90,7 +97,9 @@ void offboardControl::send_arming_request(bool arm) {
 }
 void offboardControl::setMode_request() {
 	rclcpp::Rate rate(10);
-	geographic_msgs::msg::GeoPoseStamped poseStamped;
+
+    // FOR POSITION CONTROL //
+	/* geographic_msgs::msg::GeoPoseStamped poseStamped;
 	geographic_msgs::msg::GeoPoint position;
 
 	position.latitude = latitude;
@@ -98,26 +107,35 @@ void offboardControl::setMode_request() {
 	position.altitude = altitude + 1.0f;
 
 	poseStamped.pose.position = position;
-	poseStamped.pose.orientation = orientation;
+	poseStamped.pose.orientation = orientation; */
 
-	for(int i = 0; i < 100; i++) {
-		global_pose_publisher->publish(poseStamped);
+
+	for(int i = 0; i < 50; i++) {
+		//global_pose_publisher->publish(poseStamped);
+        velocity_publisher->publish(setpoint_velocity);
+		rate.sleep();
+	}
+    //setpoint_velocity.linear.z = 0.0;
+    for(int i = 0; i < 50; i++) {
+		//global_pose_publisher->publish(poseStamped);
+        velocity_publisher->publish(setpoint_velocity);
 		rate.sleep();
 	}
 
 	auto request = std::make_shared<mavros_msgs::srv::SetMode::Request>();
         request->custom_mode = "OFFBOARD";
         auto set_mode_result = set_mode_client->async_send_request(request, std::bind(&offboardControl::setMode_response_callback, this, _1));
-        global_pose_publisher->publish(poseStamped);
+        //global_pose_publisher->publish(poseStamped);
+        //velocity_publisher->publish(setpoint_velocity);
 }
 void offboardControl::send_takeoff_request() {
 	auto request = std::make_shared<mavros_msgs::srv::CommandTOL::Request>();
 
 	//request->min_pitch = asin(-2.0*(orientation.x*orientation.z - orientation.w*orientation.y));
 	request->yaw = quat_to_yaw(orientation);
-	request->altitude = altitude + 50000.0f; 
-	request->latitude = latitude + 5000.0f;
-	request->longitude = longitude + 5000.0f;
+	request->altitude = altitude + 5.0f; 
+	request->latitude = latitude;
+	request->longitude = longitude;
 
 	auto tol_result = tol_client->async_send_request(request, std::bind(&offboardControl::tol_response_callback, this, _1));
 }
@@ -144,9 +162,6 @@ void offboardControl::arm_response_callback(rclcpp::Client<mavros_msgs::srv::Com
 }
 
 void offboardControl::state_callback(const mavros_msgs::msg::State::SharedPtr state_msg) {
-    
-    // std::cout << current_state_.mode << std::endl;
-    // RCLCPP_INFO(this->get_logger(), "Got state. %d", msg->armed);
 
     if (state_msg->armed && !current_state.armed) {
         RCLCPP_WARN(this->get_logger(), "Armed");
@@ -154,24 +169,11 @@ void offboardControl::state_callback(const mavros_msgs::msg::State::SharedPtr st
         RCLCPP_WARN(this->get_logger(), "Disarmed");
     }
 
-    if (state_msg->mode == offboard_str_ && current_state.mode != offboard_str_) {
+    if (state_msg->mode == "OFFBOARD" && current_state.mode != "OFFBOARD") {
         RCLCPP_WARN(this->get_logger(), "Offboard mode enabled.");
-    } else if (state_msg->mode != offboard_str_ && current_state.mode == offboard_str_) {
+    } else if (state_msg->mode != "OFFBOARD" && current_state.mode == "OFFBOARD") {
         RCLCPP_WARN(this->get_logger(), "Offboard mode disabled.");
     }
-
-    //If the device isn't in OFFBOARD mode, request it ONCE (if it's turned off during operation, assume manual takeover)
-    // if (!offboard_requested_) {
-    //     if (state_msg->mode != offboard_str_) {
-    //         //Put in offboard mode at all times while this node is running
-    //         RCLCPP_WARN(this->get_logger(), "Offboard mode requested.");
-    //         auto offboard_request = std::make_shared<mavros_msgs::srv::SetMode::Request>();
-    //         offboard_request->custom_mode = "OFFBOARD";
-    //         auto mode_result = set_mode_client_->async_send_request(offboard_request, std::bind(&AstroTeleop::mode_response_callback, this, _1));
-    //     }
-    //     //Set to true regardless
-    //     offboard_requested_ = true;
-    // }
 
     current_state = *state_msg;
 }
@@ -233,13 +235,10 @@ void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_ms
             //Arm or takeoff, depending on the state
             if (!current_state.armed) {
             	// set offboard mode
+                send_arming_request(true);
             	setMode_request();
                 //Arm
-                send_arming_request(true);
-                while(true) {
-                	global_pose_publisher->publish(poseStamped);
-					rate.sleep();
-                }
+                
             } 
         }
         button_state_.arm.state = arm_button_state;
@@ -294,6 +293,14 @@ void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_ms
     // }
 }
 
+void offboardControl::setpoint_velocity_callback(const geometry_msgs::msg::Twist::SharedPtr velocity_msg) {
+    RCLCPP_WARN(this->get_logger(), "Received velocity command with the following velocities:");
+    float x = velocity_msg->linear.x;
+    float y = velocity_msg->linear.y;
+    float z = velocity_msg->linear.z;
+
+    RCLCPP_WARN(this->get_logger(), "X: %d, Y: %d, Z: %d", x, y, z);
+}
 void offboardControl::pose_callback(const sensor_msgs::msg::NavSatFix::SharedPtr pose_msg) {
 	latitude = pose_msg->latitude;
 	longitude = pose_msg->longitude;
