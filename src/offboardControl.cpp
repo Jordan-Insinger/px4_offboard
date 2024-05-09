@@ -175,6 +175,9 @@ void offboardControl::state_callback(const mavros_msgs::msg::State::SharedPtr st
         RCLCPP_WARN(this->get_logger(), "Offboard mode disabled.");
     }
 
+    if(state_msg->mode == "POSCTL")
+        RCLCPP_WARN(this->get_logger(), "Position Control enabled.");
+
     current_state = *state_msg;
 }
 
@@ -294,12 +297,7 @@ void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_ms
 }
 
 void offboardControl::setpoint_velocity_callback(const geometry_msgs::msg::Twist::SharedPtr velocity_msg) {
-    RCLCPP_WARN(this->get_logger(), "Received velocity command with the following velocities:");
-    float x = velocity_msg->linear.x;
-    float y = velocity_msg->linear.y;
-    float z = velocity_msg->linear.z;
 
-    RCLCPP_WARN(this->get_logger(), "X: %d, Y: %d, Z: %d", x, y, z);
 }
 void offboardControl::pose_callback(const sensor_msgs::msg::NavSatFix::SharedPtr pose_msg) {
 	latitude = pose_msg->latitude;
