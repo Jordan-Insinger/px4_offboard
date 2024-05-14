@@ -109,14 +109,8 @@ void offboardControl::setMode_request() {
 	poseStamped.pose.position = position;
 	poseStamped.pose.orientation = orientation; */
 
-
-	for(int i = 0; i < 50; i++) {
-		//global_pose_publisher->publish(poseStamped);
-        velocity_publisher->publish(setpoint_velocity);
-		rate.sleep();
-	}
-    //setpoint_velocity.linear.z = 0.0;
-    for(int i = 0; i < 50; i++) {
+    setpoint_velocity.linear.z = 1.0;
+	for(int i = 0; i < 20; i++) {
 		//global_pose_publisher->publish(poseStamped);
         velocity_publisher->publish(setpoint_velocity);
 		rate.sleep();
@@ -239,10 +233,11 @@ void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_ms
             if (!current_state.armed) {
             	// set offboard mode
                 send_arming_request(true);
-            	setMode_request();
                 //Arm
                 
-            } 
+            } else {
+                setMode_request();
+            }
         }
         button_state_.arm.state = arm_button_state;
     }
@@ -252,11 +247,12 @@ void offboardControl::joy_callback(const sensor_msgs::msg::Joy::SharedPtr joy_ms
     // 	RCLCPP_WARN(this->get_logger(), "Takeoff Request has been made");
     // 	send_takeoff_request();
     // }
-    int setModeButton = get_button(joy_msg, buttons_.takeoff);
-    if(setModeButton == 1) {
-    	RCLCPP_WARN(this->get_logger(), "Offboard mode request has been made");
-    	setMode_request();
-    }
+
+    // int setModeButton = get_button(joy_msg, buttons_.takeoff);
+    // if(setModeButton == 1) {
+    // 	RCLCPP_WARN(this->get_logger(), "Offboard mode request has been made");
+    // 	setMode_request();
+    // }
 
 
     //Check for disarm button press
@@ -307,12 +303,34 @@ void offboardControl::pose_callback(const sensor_msgs::msg::NavSatFix::SharedPtr
 void offboardControl::lpos_callback(const nav_msgs::msg::Odometry::SharedPtr lpos_msg) {
 	orientation = ((lpos_msg->pose).pose).orientation;
 }
+
 void offboardControl::setMode_response_callback(rclcpp::Client<mavros_msgs::srv::SetMode>::SharedFuture future) {
 	auto response = future.get();
 
-	if(response->mode_sent)
+	if(response->mode_sent) {
 		RCLCPP_WARN(this->get_logger(), "MODE SET TO OFFBOARD!");
-	else {
+
+        rclcpp::Rate rate(10);
+
+        RCLCPP_WARN(this->get_logger(), "Taking off");
+        setpoint_velocity.linear.z = 1.0;
+        for(int i = 0; i < 100; i++) {
+            //global_pose_publisher->publish(poseStamped);
+            velocity_publisher->publish(setpoint_velocity);
+            rate.sleep();
+        }
+
+
+        RCLCPP_WARN(this->get_logger(), "Hovering");
+        setpoint_velocity.linear.z = 0.0;
+        for(int i = 0; i < 100; i++) {
+            //global_pose_publisher->publish(poseStamped);
+            velocity_publisher->publish(setpoint_velocity);
+            rate.sleep();
+        }
+
+        RCLCPP_WARN(this->get_logger(), "Done");
+	} else {
 		RCLCPP_WARN(this->get_logger(), "FAILED TO ENTER OFFBOARD MODE");
 	}
 
